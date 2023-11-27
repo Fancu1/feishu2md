@@ -14,7 +14,20 @@ import (
 	"github.com/pkg/errors"
 )
 
-func handleUrlArgument(url, outputDir string) error {
+type UrlArgumentOptions struct {
+	Url       string
+	OutputDir string
+	OnePage   bool
+}
+
+func HandleUrlArgument(options UrlArgumentOptions) error {
+	return handleUrlArgument(options)
+}
+
+func handleUrlArgument(options UrlArgumentOptions) error {
+	url := options.Url
+	outputDir := options.OutputDir
+
 	configPath, err := core.GetConfigFilePath()
 	utils.CheckErr(err)
 	config, err := core.ReadConfigFromFile(configPath)
@@ -48,7 +61,7 @@ func handleUrlArgument(url, outputDir string) error {
 	docx, blocks, err := client.GetDocxContent(ctx, docToken)
 	utils.CheckErr(err)
 
-	parser := core.NewParser(ctx)
+	parser := core.NewParser(ctx, options.OnePage)
 
 	title := docx.Title
 	markdown := parser.ParseDocxContent(docx, blocks)

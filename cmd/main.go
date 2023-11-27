@@ -17,9 +17,12 @@ func main() {
 		Usage:   "download feishu/larksuite document to markdown file",
 		Action: func(ctx *cli.Context) error {
 			if ctx.NArg() > 0 {
-				url := ctx.Args().Get(0)
-				outputDir := ctx.String("output")
-				return handleUrlArgument(url, outputDir)
+				options := UrlArgumentOptions{
+					Url:       ctx.Args().Get(0),
+					OutputDir: ctx.String("output"),
+					OnePage:   ctx.Bool("one-page"),
+				}
+				return HandleUrlArgument(options)
 			} else {
 				cli.ShowAppHelp(ctx)
 				return nil
@@ -31,6 +34,10 @@ func main() {
 				Aliases: []string{"o"},
 				Value:   ".",
 				Usage:   "Specify the output directory for the markdown files",
+			},
+			&cli.BoolFlag{
+				Name:  "one-page",
+				Usage: "Process the document in one-page mode",
 			},
 		},
 		Commands: []*cli.Command{
