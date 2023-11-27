@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Wsine/feishu2md/utils"
@@ -116,12 +117,16 @@ func renderMarkdownTable(data [][]string) string {
 // Parse the new version of document (docx)
 // =============================================================
 
-func (p *Parser) ParseDocxContent(doc *lark.DocxDocument, blocks []*lark.DocxBlock) string {
+func (p *Parser) ParseDocxContent(doc *lark.DocxDocument, blocks []*lark.DocxBlock, indentLevel ...int) string {
 	for _, block := range blocks {
 		p.blockMap[block.BlockID] = block
+		fmt.Println(block.BlockID, block.BlockType)
 	}
 
 	entryBlock := p.blockMap[doc.DocumentID]
+	if len(indentLevel) > 0 {
+		return p.ParseDocxBlock(entryBlock, indentLevel[0])
+	}
 	return p.ParseDocxBlock(entryBlock, 0)
 }
 
@@ -134,8 +139,19 @@ func (p *Parser) ParseDocxBlock(b *lark.DocxBlock, indentLevel int) string {
 	case lark.DocxBlockTypeText:
 		buf.WriteString(p.ParseDocxBlockText(b.Text))
 	case lark.DocxBlockTypeHeading1:
-		buf.WriteString("# ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading1))
+		// if is a chapter link, load the chapter content
+		if p.IsChapterLink(p.ParseDocxBlockText(b.Heading1)) {
+			fmt.Println("Chapter link detected, loading chapter content...")
+			chapterUrl := p.GetChapterLinkUrl(p.ParseDocxBlockText(b.Heading1))
+			chapterContent, err := GetDocsContent(chapterUrl, indentLevel+1)
+			if err != nil {
+				return "" // TODO: handle error
+			}
+			buf.WriteString(chapterContent)
+		} else {
+			buf.WriteString("# ")
+			buf.WriteString(p.ParseDocxBlockText(b.Heading1))
+		}
 	case lark.DocxBlockTypeHeading2:
 		buf.WriteString("## ")
 		buf.WriteString(p.ParseDocxBlockText(b.Heading2))
@@ -165,9 +181,7 @@ func (p *Parser) ParseDocxBlock(b *lark.DocxBlock, indentLevel int) string {
 	case lark.DocxBlockTypeOrdered:
 		buf.WriteString(p.ParseDocxBlockOrdered(b, indentLevel))
 	case lark.DocxBlockTypeCode:
-		buf.WriteString("```" + DocxCodeLang2MdStr[b.Code.Style.Language] + "\n")
-		buf.WriteString(strings.TrimSpace(p.ParseDocxBlockText(b.Code)))
-		buf.WriteString("\n```\n")
+		buf.WriteString(p.ParseCodeBlock(b, indentLevel))
 	case lark.DocxBlockTypeQuote:
 		buf.WriteString("> ")
 		buf.WriteString(p.ParseDocxBlockText(b.Quote))
@@ -197,6 +211,22 @@ func (p *Parser) ParseDocxBlock(b *lark.DocxBlock, indentLevel int) string {
 	return buf.String()
 }
 
+func (p *Parser) ParseCodeBlock(b *lark.DocxBlock, indentLevel int) string {
+	code := p.ParseDocxBlockText(b.Code)
+	codeLanguage := DocxCodeLang2MdStr[b.Code.Style.Language]
+	indentUnit := strings.Repeat("\t", indentLevel)
+
+	buf := new(strings.Builder)
+	buf.WriteString("\n")
+	buf.WriteString(indentUnit + "```" + codeLanguage)
+	buf.WriteString("\n")
+	buf.WriteString(indentUnit + code)
+	buf.WriteString(indentUnit + "```")
+	buf.WriteString("\n")
+
+	return buf.String()
+}
+
 func (p *Parser) ParseDocxBlockPage(b *lark.DocxBlock) string {
 	buf := new(strings.Builder)
 
@@ -213,15 +243,95 @@ func (p *Parser) ParseDocxBlockPage(b *lark.DocxBlock) string {
 	return buf.String()
 }
 
+// func (p *Parser) ParseDocxBlockText(b *lark.DocxBlockText) string {
+// 	buf := new(strings.Builder)
+// 	numElem := len(b.Elements)
+// 	for _, e := range b.Elements {
+// 		inline := numElem > 1
+// 		buf.WriteString(p.ParseDocxTextElement(e, inline))
+// 	}
+// 	buf.WriteString("\n")
+// 	return buf.String()
+// }
+
 func (p *Parser) ParseDocxBlockText(b *lark.DocxBlockText) string {
 	buf := new(strings.Builder)
 	numElem := len(b.Elements)
-	for _, e := range b.Elements {
+	for i := 0; i < numElem; i++ {
 		inline := numElem > 1
-		buf.WriteString(p.ParseDocxTextElement(e, inline))
+		currentText := p.ParseDocxTextElement(b.Elements[i], inline)
+
+		if strings.HasPrefix(currentText, "**") && strings.HasSuffix(currentText, "**") {
+			trimmedText := strings.TrimPrefix(currentText, "**")
+			trimmedText = strings.TrimSuffix(trimmedText, "**")
+			trimmedText = strings.TrimSpace(trimmedText)
+			currentText = "**" + trimmedText + "**"
+
+			for i+1 < numElem {
+				nextText := p.ParseDocxTextElement(b.Elements[i+1], inline)
+				if strings.HasPrefix(nextText, "**") && strings.HasSuffix(nextText, "**") {
+					nextTrimmed := strings.TrimPrefix(nextText, "**")
+					nextTrimmed = strings.TrimSuffix(nextTrimmed, "**")
+					nextTrimmed = strings.TrimSpace(nextTrimmed)
+
+					currentText = strings.TrimSuffix(currentText, "**") + nextTrimmed + "**"
+					i++
+				} else {
+					break
+				}
+			}
+		}
+
+		buf.WriteString(currentText)
 	}
+
 	buf.WriteString("\n")
 	return buf.String()
+}
+
+// IsChapterLink checks if the string is a feishu other chapter link
+// eg: [Chapter 1](https://xxx.feishu.cn/docx/xxx)
+func (p *Parser) IsChapterLink(link string) bool {
+	link = strings.TrimSpace(link)
+	if strings.HasPrefix(link, "[") && strings.HasSuffix(link, ")") {
+		closeBracketIndex := strings.Index(link, "]")
+		openParenIndex := strings.Index(link, "(")
+
+		if closeBracketIndex > 0 && openParenIndex == closeBracketIndex+1 {
+			linkText := link[1:closeBracketIndex]
+			url := link[openParenIndex+1 : len(link)-1]
+
+			if linkText != "" && url != "" {
+				return p.isValidUrl(url)
+			}
+		}
+	}
+	return false
+}
+
+// GetChapterLinkUrl returns the url of the chapter link
+// eg: [Chapter 1](https://xxx.feishu.cn/docx/xxx)
+func (p *Parser) GetChapterLinkUrl(link string) string {
+	link = strings.TrimSpace(link)
+	// split by "](", url is the second part
+	linkParts := strings.Split(link, "](")
+	if len(linkParts) != 2 {
+		return ""
+	}
+	url := linkParts[1]
+	// remove the last ")"
+	url = strings.TrimSuffix(url, ")")
+	return url
+}
+
+func (p *Parser) isValidUrl(url string) bool {
+	// TODO: refactor
+	reg := regexp.MustCompile("^https://[a-zA-Z0-9-]+.(feishu.cn|larksuite.com)/(docx|wiki)/([a-zA-Z0-9]+)")
+	matchResult := reg.FindStringSubmatch(url)
+	if matchResult == nil || len(matchResult) != 4 {
+		return false
+	}
+	return true
 }
 
 func (p *Parser) ParseDocxTextElement(e *lark.DocxTextElement, inline bool) string {
