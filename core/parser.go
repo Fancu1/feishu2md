@@ -15,6 +15,7 @@ type Parser struct {
 	ctx       context.Context
 	ImgTokens []string
 	blockMap  map[string]*lark.DocxBlock
+	// TODO: one page option
 }
 
 func NewParser(ctx context.Context) *Parser {
@@ -117,16 +118,13 @@ func renderMarkdownTable(data [][]string) string {
 // Parse the new version of document (docx)
 // =============================================================
 
-func (p *Parser) ParseDocxContent(doc *lark.DocxDocument, blocks []*lark.DocxBlock, indentLevel ...int) string {
+func (p *Parser) ParseDocxContent(doc *lark.DocxDocument, blocks []*lark.DocxBlock) string {
 	for _, block := range blocks {
 		p.blockMap[block.BlockID] = block
 		fmt.Println(block.BlockID, block.BlockType)
 	}
 
 	entryBlock := p.blockMap[doc.DocumentID]
-	if len(indentLevel) > 0 {
-		return p.ParseDocxBlock(entryBlock, indentLevel[0])
-	}
 	return p.ParseDocxBlock(entryBlock, 0)
 }
 
@@ -139,43 +137,23 @@ func (p *Parser) ParseDocxBlock(b *lark.DocxBlock, indentLevel int) string {
 	case lark.DocxBlockTypeText:
 		buf.WriteString(p.ParseDocxBlockText(b.Text))
 	case lark.DocxBlockTypeHeading1:
-		// if is a chapter link, load the chapter content
-		if p.IsChapterLink(p.ParseDocxBlockText(b.Heading1)) {
-			fmt.Println("Chapter link detected, loading chapter content...")
-			chapterUrl := p.GetChapterLinkUrl(p.ParseDocxBlockText(b.Heading1))
-			chapterContent, err := GetDocsContent(chapterUrl, indentLevel+1)
-			if err != nil {
-				return "" // TODO: handle error
-			}
-			buf.WriteString(chapterContent)
-		} else {
-			buf.WriteString("# ")
-			buf.WriteString(p.ParseDocxBlockText(b.Heading1))
-		}
+		buf.WriteString(p.processHeadingWithLink(b.Heading1, "#"))
 	case lark.DocxBlockTypeHeading2:
-		buf.WriteString("## ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading2))
+		buf.WriteString(p.processHeadingWithLink(b.Heading2, "##"))
 	case lark.DocxBlockTypeHeading3:
-		buf.WriteString("### ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading3))
+		buf.WriteString(p.processHeadingWithLink(b.Heading3, "###"))
 	case lark.DocxBlockTypeHeading4:
-		buf.WriteString("#### ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading4))
+		buf.WriteString(p.processHeadingWithLink(b.Heading4, "####"))
 	case lark.DocxBlockTypeHeading5:
-		buf.WriteString("##### ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading5))
+		buf.WriteString(p.processHeadingWithLink(b.Heading5, "#####"))
 	case lark.DocxBlockTypeHeading6:
-		buf.WriteString("###### ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading6))
+		buf.WriteString(p.processHeadingWithLink(b.Heading6, "######"))
 	case lark.DocxBlockTypeHeading7:
-		buf.WriteString("####### ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading7))
+		buf.WriteString(p.processHeadingWithLink(b.Heading7, "#######"))
 	case lark.DocxBlockTypeHeading8:
-		buf.WriteString("######## ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading8))
+		buf.WriteString(p.processHeadingWithLink(b.Heading8, "########"))
 	case lark.DocxBlockTypeHeading9:
-		buf.WriteString("######### ")
-		buf.WriteString(p.ParseDocxBlockText(b.Heading9))
+		buf.WriteString(p.processHeadingWithLink(b.Heading9, "#########"))
 	case lark.DocxBlockTypeBullet:
 		buf.WriteString(p.ParseDocxBlockBullet(b, indentLevel))
 	case lark.DocxBlockTypeOrdered:
@@ -209,6 +187,22 @@ func (p *Parser) ParseDocxBlock(b *lark.DocxBlock, indentLevel int) string {
 	default:
 	}
 	return buf.String()
+}
+
+func (p *Parser) processHeadingWithLink(bText *lark.DocxBlockText, headingPrefix string) string {
+	headingContent := p.ParseDocxBlockText(bText)
+
+	// if is a chapter link, load the chapter content
+	if p.IsChapterLink(headingContent) {
+		fmt.Println("chapter link", headingContent)
+		chapterUrl := p.GetChapterLinkUrl(headingContent)
+		chapterContent, err := GetDocsContent(chapterUrl)
+		if err != nil {
+			return ""
+		}
+		return headingPrefix + " " + chapterContent
+	}
+	return headingPrefix + " " + headingContent
 }
 
 func (p *Parser) ParseCodeBlock(b *lark.DocxBlock, indentLevel int) string {

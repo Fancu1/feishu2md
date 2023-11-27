@@ -8,7 +8,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func GetDocsContent(url string, indentLevel int) (string, error) {
+func GetDocsContent(url string) (string, error) {
 	configPath, err := GetConfigFilePath()
 	utils.CheckErr(err)
 	config, err := ReadConfigFromFile(configPath)
@@ -43,7 +43,8 @@ func GetDocsContent(url string, indentLevel int) (string, error) {
 
 	parser := NewParser(ctx)
 
-	markdown := parser.ParseDocxContent(docx, blocks, indentLevel)
+	markdown := parser.ParseDocxContent(docx, blocks)
 
+	// docs title has a '#' prefix, remove it
 	return markdown[1:], nil
 }
